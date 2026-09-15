@@ -1,0 +1,171 @@
+openapi: 3.0.3
+info:
+  title: SMS Service API
+  description: Contract-first API for sending SMS messages through the configured sender strategies.
+  version: 1.0.0
+servers:
+  - url: /
+tags:
+  - name: Sms
+    description: Operations for sending SMS messages
+paths:
+  /api/sms/send:
+    post:
+      tags:
+        - Sms
+      operationId: sendSms
+      summary: Send an SMS message
+      description: >
+        Looks up the given senderId, resolves the sender name and provider strategy,
+        replaces the "{senderName}" placeholder in the message, sends it via the
+        configured SMS provider and persists a log entry with the computed SMS part count.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendSmsRequest'
+      responses:
+        '200':
+          description: Message sent and logged successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendSmsResponse'
+        '400':
+          description: Invalid request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Sender ID not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected error while sending the message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/sms/sender-names/{senderName}/sms-part-count-total:
+    get:
+      tags:
+        - Sms
+      operationId: getSmsPartCountTotalBySenderName
+      summary: Get total SMS part count by sender name
+      description: Returns the sum of smsPartCount for all SMS records matching the provided senderName.
+      parameters:
+        - name: senderName
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [PinkyAura]
+      responses:
+        '200':
+          description: Total SMS part count for the sender name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SenderSmsPartCountTotalResponse'
+        '400':
+          description: Invalid sender name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Unexpected error while reading totals
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    SendSmsRequest:
+      type: object
+      required:
+        - message
+        - senderId
+        - senderName
+        - phoneNumber
+      properties:
+        message:
+          type: string
+          minLength: 1
+          description: >
+            The message body. May contain the literal placeholder "{senderName}" which
+            will be replaced with the senderName value before sending.
+          example: "Hello {senderName}, your order has shipped."
+        senderId:
+          type: string
+          minLength: 1
+          description: Business code identifying the registered sender in the SenderId table.
+          example: "ORD-01"
+        senderName:
+          type: string
+          enum: [PinkyAura]
+          description: Name used to replace the "{senderName}" placeholder inside the message.
+          example: "PinkyAura"
+        phoneNumber:
+          type: string
+          minLength: 1
+          description: Destination phone number.
+          example: "01012345678"
+    SendSmsResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Identifier of the persisted message log entry.
+        senderId:
+          type: string
+        phoneNumber:
+          type: string
+        message:
+          type: string
+          description: The final message content after placeholder replacement.
+        encoding:
+          type: string
+          enum: [ENGLISH, UNICODE]
+          description: Detected character encoding used to compute the SMS part count.
+        smsPartCount:
+          type: integer
+          description: Number of SMS parts the message was split into.
+        status:
+          type: string
+          enum: [SENT, FAILED]
+        createdAt:
+          type: string
+          format: date-time
+    SenderSmsPartCountTotalResponse:
+      type: object
+      required:
+        - senderName
+        - totalSmsPartCount
+      properties:
+        senderName:
+          type: string
+          enum: [PinkyAura]
+        totalSmsPartCount:
+          type: integer
+          format: int64
+          minimum: 0
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+        path:
+          type: string

@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: qalioub
+
+  # SQL Server Database Configuration
+  datasource:
+    url: ${DB_URL}
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  # JPA Configuration for SQL Server
+  jpa:
+    hibernate:
+      ddl-auto: ${DB_DDL_AUTO:update}
+    show-sql: ${DB_SHOW_SQL:false}
+    database-platform: org.hibernate.dialect.SQLServerDialect
+
+app:
+  # JWT
+  jwt:
+    secret: ThisIsAVeryLongSecretKeyForJWTSigningThatIsAtLeast256BitsLong1234567890
+    expiration-ms: 86400000
+
+  # WhySMS API
+  sms:
+    api-url: https://bulk.whysms.com/api/v3/sms/send
+    bearer-token: ${SMSTOKEN:1234}
+    sender-id: "My Order"
+
+  # OTP settings
+  otp:
+    expiration-minutes: 5
+    length: 6
+
+
+
+  # CORS
+  cors:
+    allowed-origins: ${ORIGINS:http://localhost:5000}
+
+# OpenAPI / Swagger UI
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /api-docs
