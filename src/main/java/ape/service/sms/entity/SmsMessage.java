@@ -34,7 +34,7 @@ public class SmsMessage {
     private String phoneNumber;
 
     @Lob
-    @Column(name = "message", nullable = false)
+    @Column(name = "message", nullable = false, columnDefinition = "NVARCHAR(255)")
     private String message;
 
     @Enumerated(EnumType.STRING)
