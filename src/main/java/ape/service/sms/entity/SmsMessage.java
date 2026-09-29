@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Nationalized;
 
 import java.time.LocalDateTime;
 
@@ -33,8 +34,11 @@ public class SmsMessage {
     @Column(name = "phone_number", nullable = false)
     private String phoneNumber;
 
+    // @Nationalized maps this to NVARCHAR/NCLOB (instead of VARCHAR/CLOB) so SQL Server
+    // stores Arabic and other non-Latin1 text as Unicode instead of replacing it with "?".
     @Lob
-    @Column(name = "message", nullable = false, columnDefinition = "NVARCHAR(255)")
+    @Nationalized
+    @Column(name = "message", nullable = false)
     private String message;
 
     @Enumerated(EnumType.STRING)
@@ -49,6 +53,7 @@ public class SmsMessage {
     private SmsStatus status;
 
     @Lob
+    @Nationalized
     @Column(name = "provider_response")
     private String providerResponse;
 
