@@ -15,6 +15,7 @@ import ape.service.sms.util.SmsSegmentCalculator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -72,8 +73,39 @@ public class SmsService {
         return smsMessageRepository.save(logEntry);
     }
 
+    /**
+     * Sums the smsPartCount for the given sender name, restricted to messages created between
+     * startDate and endDate (inclusive).
+     * <ul>
+     *     <li>If both are omitted, the current calendar month is used.</li>
+     *     <li>If only startDate is provided, all data from that date onwards is returned.</li>
+     *     <li>If only endDate is provided, all data up to and including that date is returned.</li>
+     *     <li>If both are provided, they are used as-is (inclusive range).</li>
+     * </ul>
+     */
     @Transactional(readOnly = true)
-    public long getSmsPartCountTotalBySenderName(SenderName senderName) {
-        return smsMessageRepository.sumSmsPartCountBySenderName(senderName);
+    public long getSmsPartCountTotalBySenderName(SenderName senderName, LocalDate startDate, LocalDate endDate) {
+        LocalDateTime from;
+        LocalDateTime to;
+
+        if (startDate == null && endDate == null) {
+            LocalDate today = LocalDate.now();
+            from = today.withDayOfMonth(1).atStartOfDay();
+            to = today.withDayOfMonth(today.lengthOfMonth()).plusDays(1).atStartOfDay();
+        } else if (startDate == null) {
+            from = null;
+            to = endDate.plusDays(1).atStartOfDay();
+        } else if (endDate == null) {
+            from = startDate.atStartOfDay();
+            to = null;
+        } else {
+            if (startDate.isAfter(endDate)) {
+                throw new IllegalArgumentException("startDate must not be after endDate");
+            }
+            from = startDate.atStartOfDay();
+            to = endDate.plusDays(1).atStartOfDay();
+        }
+
+        return smsMessageRepository.sumSmsPartCountBySenderNameAndCreatedAtBetween(senderName, from, to);
     }
 }

@@ -1,6 +1,10 @@
 package ape.service.sms.controller;
 
 import ape.service.sms.entity.SenderId;
+import ape.service.sms.entity.SenderName;
+import ape.service.sms.entity.SmsEncodingType;
+import ape.service.sms.entity.SmsMessage;
+import ape.service.sms.entity.SmsStatus;
 import ape.service.sms.repository.SenderIdRepository;
 import ape.service.sms.repository.SmsMessageRepository;
 import ape.service.sms.sender.SmsSendResult;
@@ -16,6 +20,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -147,5 +153,98 @@ class SmsControllerIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("senderName", "PinkyAura");
         assertThat(response.getBody()).containsEntry("totalSmsPartCount", 2);
+    }
+
+    @Test
+    void defaultsToCurrentMonthWhenNoDatesProvided() {
+        persistMessage(LocalDate.now().atTime(10, 0), 1);
+        persistMessage(LocalDate.now().minusMonths(1).atTime(10, 0), 5);
+
+        ResponseEntity<Map> response = restTemplate.getForEntity(
+                "/api/sms/sender-names/{senderName}/sms-part-count-total",
+                Map.class,
+                "PinkyAura");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).containsEntry("totalSmsPartCount", 1);
+    }
+
+    @Test
+    void restrictsToProvidedStartAndEndDate() {
+        persistMessage(LocalDate.now().withDayOfMonth(1).atTime(10, 0), 2);
+        persistMessage(LocalDate.now().minusMonths(1).atTime(10, 0), 7);
+
+        LocalDate startDate = LocalDate.now().withDayOfMonth(1);
+        LocalDate endDate = LocalDate.now();
+
+        ResponseEntity<Map> response = restTemplate.getForEntity(
+                "/api/sms/sender-names/{senderName}/sms-part-count-total?startDate={start}&endDate={end}",
+                Map.class,
+                "PinkyAura", startDate, endDate);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).containsEntry("totalSmsPartCount", 2);
+    }
+
+    @Test
+    void returnsAllDataFromStartDateOnwardsWhenOnlyStartDateProvided() {
+        LocalDate today = LocalDate.now();
+        persistMessage(today.minusDays(10).atTime(9, 0), 100);
+        persistMessage(today.minusDays(2).atTime(9, 0), 3);
+        persistMessage(today.plusDays(5).atTime(9, 0), 4);
+
+        LocalDate startDate = today.minusDays(3);
+
+        ResponseEntity<Map> response = restTemplate.getForEntity(
+                "/api/sms/sender-names/{senderName}/sms-part-count-total?startDate={start}",
+                Map.class,
+                "PinkyAura", startDate);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).containsEntry("totalSmsPartCount", 7);
+    }
+
+    @Test
+    void returnsAllDataUpToEndDateWhenOnlyEndDateProvided() {
+        LocalDate today = LocalDate.now();
+        persistMessage(today.minusDays(30).atTime(9, 0), 3);
+        persistMessage(today.minusDays(2).atTime(9, 0), 4);
+        persistMessage(today.plusDays(2).atTime(9, 0), 100);
+
+        LocalDate endDate = today.minusDays(1);
+
+        ResponseEntity<Map> response = restTemplate.getForEntity(
+                "/api/sms/sender-names/{senderName}/sms-part-count-total?endDate={end}",
+                Map.class,
+                "PinkyAura", endDate);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).containsEntry("totalSmsPartCount", 7);
+    }
+
+    @Test
+    void returns400WhenStartDateIsAfterEndDate() {
+        LocalDate startDate = LocalDate.now();
+        LocalDate endDate = LocalDate.now().minusDays(1);
+
+        ResponseEntity<Map> response = restTemplate.getForEntity(
+                "/api/sms/sender-names/{senderName}/sms-part-count-total?startDate={start}&endDate={end}",
+                Map.class,
+                "PinkyAura", startDate, endDate);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    private void persistMessage(LocalDateTime createdAt, int smsPartCount) {
+        SmsMessage message = new SmsMessage();
+        message.setSenderId(SENDER_CODE);
+        message.setSenderName(SenderName.PINKY_AURA);
+        message.setPhoneNumber("01000000000");
+        message.setMessage("test");
+        message.setEncoding(SmsEncodingType.ENGLISH);
+        message.setSmsPartCount(smsPartCount);
+        message.setStatus(SmsStatus.SENT);
+        message.setCreatedAt(createdAt);
+        smsMessageRepository.save(message);
     }
 }

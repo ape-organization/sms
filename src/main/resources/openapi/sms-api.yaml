@@ -56,7 +56,14 @@ paths:
         - Sms
       operationId: getSmsPartCountTotalBySenderName
       summary: Get total SMS part count by sender name
-      description: Returns the sum of smsPartCount for all SMS records matching the provided senderName.
+      description: >
+        Returns the sum of smsPartCount for all SMS records matching the provided senderName,
+        created between startDate and endDate (inclusive).
+
+
+        If neither startDate nor endDate is provided, the current calendar month is used.
+        If only startDate is provided, all data from that date onwards is included.
+        If only endDate is provided, all data up to and including that date is included.
       parameters:
         - name: senderName
           in: path
@@ -64,6 +71,28 @@ paths:
           schema:
             type: string
             enum: [PinkyAura]
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: >
+            Inclusive start date (yyyy-MM-dd). Defaults to the first day of the current month
+            when omitted along with endDate. When provided without endDate, all data from this
+            date onwards is included.
+          example: "2025-01-01"
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: >
+            Inclusive end date (yyyy-MM-dd). Defaults to the last day of the current month
+            when omitted along with startDate. When provided without startDate, all data up to
+            and including this date is included.
+          example: "2025-01-31"
       responses:
         '200':
           description: Total SMS part count for the sender name

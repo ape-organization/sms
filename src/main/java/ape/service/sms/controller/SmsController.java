@@ -8,8 +8,10 @@ import ape.service.sms.generated.model.SendSmsResponse;
 import ape.service.sms.generated.model.SenderSmsPartCountTotalResponse;
 import ape.service.sms.service.SmsService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.time.ZoneId;
 
 /**
@@ -49,9 +51,10 @@ public class SmsController implements SmsApi {
     }
 
     @Override
-    public ResponseEntity<SenderSmsPartCountTotalResponse> getSmsPartCountTotalBySenderName(String senderName) {
+    public ResponseEntity<SenderSmsPartCountTotalResponse> getSmsPartCountTotalBySenderName(
+            String senderName, @Nullable LocalDate startDate, @Nullable LocalDate endDate) {
         SenderName senderNameEnum = SenderName.fromValue(senderName);
-        long totalSmsPartCount = smsService.getSmsPartCountTotalBySenderName(senderNameEnum);
+        long totalSmsPartCount = smsService.getSmsPartCountTotalBySenderName(senderNameEnum, startDate, endDate);
 
         SenderSmsPartCountTotalResponse response = new SenderSmsPartCountTotalResponse()
                 .senderName(SenderSmsPartCountTotalResponse.SenderNameEnum.fromValue(senderNameEnum.getValue()))
