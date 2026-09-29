@@ -184,6 +184,18 @@ components:
           type: integer
           format: int64
           minimum: 0
+        startDate:
+          type: string
+          format: date
+          description: >
+            Inclusive start date actually used to compute the total. Omitted when the range
+            is unbounded at the start (only endDate was provided).
+        endDate:
+          type: string
+          format: date
+          description: >
+            Inclusive end date actually used to compute the total. Omitted when the range
+            is unbounded at the end (only startDate was provided).
     ErrorResponse:
       type: object
       properties:

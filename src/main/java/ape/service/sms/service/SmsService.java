@@ -82,16 +82,22 @@ public class SmsService {
      *     <li>If only endDate is provided, all data up to and including that date is returned.</li>
      *     <li>If both are provided, they are used as-is (inclusive range).</li>
      * </ul>
+     * The returned {@link SmsPartCountSummary} reports the effective startDate/endDate that were
+     * actually applied (null when a side of the range is unbounded).
      */
     @Transactional(readOnly = true)
-    public long getSmsPartCountTotalBySenderName(SenderName senderName, LocalDate startDate, LocalDate endDate) {
+    public SmsPartCountSummary getSmsPartCountTotalBySenderName(SenderName senderName, LocalDate startDate, LocalDate endDate) {
+        LocalDate effectiveStartDate = startDate;
+        LocalDate effectiveEndDate = endDate;
         LocalDateTime from;
         LocalDateTime to;
 
         if (startDate == null && endDate == null) {
             LocalDate today = LocalDate.now();
-            from = today.withDayOfMonth(1).atStartOfDay();
-            to = today.withDayOfMonth(today.lengthOfMonth()).plusDays(1).atStartOfDay();
+            effectiveStartDate = today.withDayOfMonth(1);
+            effectiveEndDate = today.withDayOfMonth(today.lengthOfMonth());
+            from = effectiveStartDate.atStartOfDay();
+            to = effectiveEndDate.plusDays(1).atStartOfDay();
         } else if (startDate == null) {
             from = null;
             to = endDate.plusDays(1).atStartOfDay();
@@ -106,6 +112,7 @@ public class SmsService {
             to = endDate.plusDays(1).atStartOfDay();
         }
 
-        return smsMessageRepository.sumSmsPartCountBySenderNameAndCreatedAtBetween(senderName, from, to);
+        long total = smsMessageRepository.sumSmsPartCountBySenderNameAndCreatedAtBetween(senderName, from, to);
+        return new SmsPartCountSummary(total, effectiveStartDate, effectiveEndDate);
     }
 }

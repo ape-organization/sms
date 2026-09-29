@@ -165,8 +165,11 @@ class SmsControllerIntegrationTest {
                 Map.class,
                 "PinkyAura");
 
+        LocalDate today = LocalDate.now();
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("totalSmsPartCount", 1);
+        assertThat(response.getBody()).containsEntry("startDate", today.withDayOfMonth(1).toString());
+        assertThat(response.getBody()).containsEntry("endDate", today.withDayOfMonth(today.lengthOfMonth()).toString());
     }
 
     @Test
@@ -184,6 +187,8 @@ class SmsControllerIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("totalSmsPartCount", 2);
+        assertThat(response.getBody()).containsEntry("startDate", startDate.toString());
+        assertThat(response.getBody()).containsEntry("endDate", endDate.toString());
     }
 
     @Test
@@ -202,6 +207,8 @@ class SmsControllerIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("totalSmsPartCount", 7);
+        assertThat(response.getBody()).containsEntry("startDate", startDate.toString());
+        assertThat(response.getBody().get("endDate")).isNull();
     }
 
     @Test
@@ -220,6 +227,8 @@ class SmsControllerIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("totalSmsPartCount", 7);
+        assertThat(response.getBody()).containsEntry("endDate", endDate.toString());
+        assertThat(response.getBody().get("startDate")).isNull();
     }
 
     @Test
