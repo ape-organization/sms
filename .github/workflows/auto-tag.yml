@@ -1,34 +1,44 @@
 name: Auto Tag from pom.xml
 
-concurrency:
-  group: release-tag
-  cancel-in-progress: false
-
 on:
   push:
     branches:
       - main
+
   pull_request:
     types:
       - opened
+      - reopened
       - synchronize
-      - closed        
+      - closed
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
 
 permissions:
   contents: write
-  pull-requests: write  
+  pull-requests: write
 
 jobs:
   auto-tag:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.merged == false
+
+    if: >-
+      github.event_name == 'push' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.action != 'closed' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor != 'dependabot[bot]'
+      )
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -38,152 +48,315 @@ jobs:
           cache: maven
 
       - name: Build project
-        run: mvn -B clean verify
+        run: mvn -B -ntp clean verify
 
-      - name: Get latest tag
+      - name: Get latest release tag
         id: get_tag
+        shell: bash
         run: |
-          latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
-          clean_latest=$(echo "$latest" | grep -oP '^\d+\.\d+\.\d+')
-          echo "latest=${clean_latest:-0.0.0}" >> $GITHUB_OUTPUT
-          echo "Latest clean tag: ${clean_latest:-0.0.0}"
+          set -euo pipefail
+
+          git fetch origin --tags
+
+          latest=$(
+            git tag --list |
+            sed -nE 's/^v?([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' |
+            sort -V |
+            tail -n 1
+          )
+
+          latest="${latest:-0.0.0}"
+
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Latest release version: $latest"
 
       - name: Extract version from pom.xml
         id: pom_version
+        shell: bash
         run: |
-          version=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          echo "version=$version" >> $GITHUB_OUTPUT
-          echo "POM version: $version"
+          set -euo pipefail
 
-      - name: Get branch name
-        id: branch
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            raw_branch="${GITHUB_REF#refs/heads/}"
-          else
-            raw_branch="${{ github.head_ref }}"
+          version_file="$RUNNER_TEMP/auto-tag-pom-version.txt"
+          rm -f "$version_file"
+
+          mvn -B -ntp help:evaluate \
+            -Dexpression=project.version \
+            -Doutput="$version_file"
+
+          version=$(tr -d '\r\n' < "$version_file")
+
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-SNAPSHOT)?$ ]]; then
+            echo "::error::Invalid POM version: $version. Expected X.Y.Z or X.Y.Z-SNAPSHOT."
+            exit 1
           fi
 
-          feature_name=$(echo "$raw_branch" | sed 's/^[^/]*\///' | sed 's/\//-/g')
-
-          echo "name=$feature_name" >> $GITHUB_OUTPUT
-          echo "Branch feature name: $feature_name"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "POM version: $version"
 
       - name: Calculate new tag
         id: new_tag
+        shell: bash
+        env:
+          LATEST_VERSION: ${{ steps.get_tag.outputs.latest }}
+          POM_VERSION: ${{ steps.pom_version.outputs.version }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          latest=${{ steps.get_tag.outputs.latest }}
-          pom_version=${{ steps.pom_version.outputs.version }}
-          branch=${{ steps.branch.outputs.name }}
+          set -euo pipefail
 
-          clean_pom=${pom_version%-SNAPSHOT}
+          python3 <<'PY'
+          import os
+          import re
+          import subprocess
 
-          IFS='.' read -r major minor patch <<< "$latest"
-          IFS='.' read -r p_major p_minor p_patch <<< "$clean_pom"
+          def parse_version(value):
+              return tuple(int(part) for part in value.split("."))
 
-          if [[ "$major" == "$p_major" && "$minor" == "$p_minor" ]]; then
-            if [[ $p_patch -gt $patch ]]; then
-              patch=$p_patch
-            else
-              patch=$((patch + 1))
-            fi
-            base_tag="$major.$minor.$patch"
-          else
-            base_tag="$p_major.$p_minor.$p_patch"
-          fi
+          latest = parse_version(os.environ["LATEST_VERSION"])
+          pom_text = os.environ["POM_VERSION"].removesuffix("-SNAPSHOT")
+          pom = parse_version(pom_text)
+          is_push = os.environ["GITHUB_EVENT_NAME"] == "push"
 
-          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            new_tag="$base_tag"
-          else
-            new_tag="$base_tag-SNAPSHOT-$branch"
-          fi
+          # Re-running a successful release must not create another version
+          # for the same commit.
+          existing_tag = None
 
-          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
-          echo "New tag: $new_tag"
+          if is_push:
+              tags_on_head = subprocess.check_output(
+                  ["git", "tag", "--points-at", "HEAD"],
+                  text=True
+              ).splitlines()
+
+              release_tags = [
+                  tag for tag in tags_on_head
+                  if re.fullmatch(r"v?\d+\.\d+\.\d+", tag)
+              ]
+
+              if release_tags:
+                  existing_tag = max(
+                      release_tags,
+                      key=lambda tag: parse_version(tag.removeprefix("v"))
+                  )
+
+          if existing_tag:
+              new_tag = existing_tag
+              skip_create = "true"
+          else:
+              # Preserve the patch-increment behavior:
+              # same major/minor => use the larger of POM patch or latest + 1.
+              if pom[:2] == latest[:2]:
+                  version = (
+                      pom[0],
+                      pom[1],
+                      max(pom[2], latest[2] + 1)
+                  )
+              elif pom > latest:
+                  version = pom
+              else:
+                  raise SystemExit(
+                      f"POM version {pom_text} is older than the latest "
+                      f"release {os.environ['LATEST_VERSION']}. "
+                      "Update pom.xml before tagging."
+                  )
+
+              base_tag = ".".join(map(str, version))
+
+              if is_push:
+                  new_tag = base_tag
+              else:
+                  pr_number = os.environ["PR_NUMBER"]
+                  if not pr_number.isdigit():
+                      raise SystemExit("Missing or invalid PR number.")
+
+                  new_tag = f"{base_tag}-SNAPSHOT-pr-{pr_number}"
+
+              skip_create = "false"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"new_tag={new_tag}\n")
+              output.write(f"skip_create={skip_create}\n")
+
+          print(f"Tag: {new_tag}")
+          print(f"Skip creation: {skip_create}")
+          PY
 
       - name: Create tag
+        if: steps.new_tag.outputs.skip_create != 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.new_tag.outputs.new_tag }}
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          set -euo pipefail
 
-          TAG=${{ steps.new_tag.outputs.new_tag }}
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git check-ref-format "refs/tags/$TAG"
 
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            remote_tag=$(git ls-remote --refs origin "refs/tags/$TAG")
 
-            if git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
-              echo "Tag $TAG already exists on remote. Skipping..."
-              exit 0
+            if [[ -n "$remote_tag" ]]; then
+              echo "::error::Release tag $TAG already exists."
+              exit 1
             fi
 
-            git tag -a $TAG -m "Release $TAG"
-            git push origin $TAG
-
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "refs/tags/$TAG:refs/tags/$TAG"
           else
-            git push origin :refs/snapshots/$TAG 2>/dev/null || true
-            git update-ref refs/snapshots/$TAG HEAD
-            git push origin refs/snapshots/$TAG
+            # Snapshot tags follow the latest PR commit.
+            git tag -fa "$TAG" -m "Snapshot $TAG"
+            git push --force origin "refs/tags/$TAG:refs/tags/$TAG"
           fi
+
+          echo "Published tag: $TAG"
 
       - name: Comment on PR with version
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.new_tag.outputs.new_tag }}
         with:
           script: |
-            const tag = "${{ steps.new_tag.outputs.new_tag }}";
+            const tag = process.env.TAG;
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `**Tag created for this PR:** \`${tag}\``
+              body: `**Snapshot tag created/updated:** \`${tag}\``
             });
 
   delete-snapshot-tag:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
 
     steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Get snapshot tag to delete
-        id: snapshot_tag
-        run: |
-          raw_branch="${{ github.head_ref }}"
-          feature_name=$(echo "$raw_branch" | sed 's/^[^/]*\///' | sed 's/\//-/g')
-
-          snapshot_tag=$(git ls-remote origin 'refs/snapshots/*' | grep "SNAPSHOT-$feature_name$" | awk '{print $2}' | sed 's|refs/snapshots/||' | sort -V | tail -n 1)
-
-          echo "tag=$snapshot_tag" >> $GITHUB_OUTPUT
-          echo "Snapshot tag to delete: $snapshot_tag"
-
-      - name: Delete snapshot tag
-        if: steps.snapshot_tag.outputs.tag != ''
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          git push origin :refs/snapshots/${{ steps.snapshot_tag.outputs.tag }} 2>/dev/null || true
-          echo "Deleted snapshot: ${{ steps.snapshot_tag.outputs.tag }}"
-
-      - name: Delete branch
-        run: |
-          git push origin --delete "${{ github.head_ref }}" 2>/dev/null || true
-          echo "Deleted branch: ${{ github.head_ref }}"
-
-      - name: Comment on PR tag deleted
-        if: steps.snapshot_tag.outputs.tag != ''
+      - name: Delete PR snapshot tags
+        id: cleanup
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = "${{ steps.snapshot_tag.outputs.tag }}";
-            const branch = "${{ github.head_ref }}";
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+
+            const suffix = `-SNAPSHOT-pr-${pr.number}`;
+            const pattern = /^\d+\.\d+\.\d+-SNAPSHOT-pr-\d+$/;
+
+            const refs = await github.paginate(
+              github.rest.git.listMatchingRefs,
+              {
+                owner,
+                repo,
+                ref: "tags/"
+              }
+            );
+
+            const matchingRefs = refs.filter(item => {
+              const tag = item.ref.replace(/^refs\/tags\//, "");
+              return pattern.test(tag) && tag.endsWith(suffix);
+            });
+
+            const deleted = [];
+
+            for (const item of matchingRefs) {
+              const ref = item.ref.replace(/^refs\//, "");
+
+              await github.rest.git.deleteRef({
+                owner,
+                repo,
+                ref
+              });
+
+              const tag = item.ref.replace(/^refs\/tags\//, "");
+              deleted.push(tag);
+              core.info(`Deleted snapshot tag: ${tag}`);
+            }
+
+            core.setOutput("deleted_tags", deleted.join("\n"));
+
+      - name: Delete branch after merge
+        id: delete_branch
+        if: github.event.pull_request.merged == true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const branch = pr.head.ref;
+
+            const { data: repository } = await github.rest.repos.get({
+              owner,
+              repo
+            });
+
+            if (
+              branch === repository.default_branch ||
+              branch === pr.base.ref
+            ) {
+              core.info(`Skipping default/base branch: ${branch}`);
+              return;
+            }
+
+            // Check separately so an already-deleted branch is harmless.
+            try {
+              await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: `heads/${branch}`
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                core.info(`Branch already deleted: ${branch}`);
+                return;
+              }
+              throw error;
+            }
+
+            await github.rest.git.deleteRef({
+              owner,
+              repo,
+              ref: `heads/${branch}`
+            });
+
+            core.setOutput("deleted_branch", branch);
+            core.info(`Deleted branch: ${branch}`);
+
+      - name: Comment on PR cleanup
+        if: >-
+          steps.cleanup.outputs.deleted_tags != '' ||
+          steps.delete_branch.outputs.deleted_branch != ''
+        uses: actions/github-script@v7
+        env:
+          DELETED_TAGS: ${{ steps.cleanup.outputs.deleted_tags }}
+          DELETED_BRANCH: ${{ steps.delete_branch.outputs.deleted_branch }}
+        with:
+          script: |
+            const lines = [];
+
+            if (process.env.DELETED_TAGS) {
+              lines.push(
+                "**Snapshot tags deleted:**",
+                "```",
+                process.env.DELETED_TAGS,
+                "```"
+              );
+            }
+
+            if (process.env.DELETED_BRANCH) {
+              lines.push(
+                `**Branch deleted:** \`${process.env.DELETED_BRANCH}\``
+              );
+            }
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `**Snapshot tag deleted:** \`${tag}\`\n**Branch deleted:** \`${branch}\``
+              body: lines.join("\n")
             });
