@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.Nationalized;
@@ -17,7 +18,11 @@ import java.time.LocalDateTime;
  * Log of every SMS send attempt, recording the resolved data and the computed SMS part count.
  */
 @Entity
-@Table(name = "sms_message")
+@Table(name = "sms_message", indexes = {
+        // Speeds up SmsMessageRepository#sumSmsPartCountBySenderNameAndCreatedAtBetween,
+        // which otherwise requires a full table scan as this log table grows.
+        @Index(name = "ix_sms_message_sender_name_created_at", columnList = "sender_name, created_at")
+})
 public class SmsMessage {
 
     @Id
